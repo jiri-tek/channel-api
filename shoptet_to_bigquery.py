@@ -74,13 +74,20 @@ def get_oauth_token(shop_name, credentials):
         print(f"  Chyba při získávání OAuth tokenu pro {shop_name}: {e}")
         return None, None
 
-def get_orders_from_api(shop_name, access_token, eshop_url, date_from, date_to):
-    """Načte objednávky ze Shoptet API pomocí OAuth token"""
+def get_orders_from_api(shop_name, access_token, auth_method, date_from, date_to):
+    """Načte objednávky ze Shoptet API"""
 
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/vnd.shoptet.v1.0+json"
-    }
+    # Nastavit správné hlavičky podle metody autentizace
+    if auth_method == "oauth":
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/vnd.shoptet.v1.0+json"
+        }
+    else:  # private token
+        headers = {
+            "Shoptet-Private-API-Token": access_token,
+            "Content-Type": "application/vnd.shoptet.v1.0+json"
+        }
 
     # Převést datum na datetime formát pro API
     date_from_dt = datetime.strptime(date_from, "%Y-%m-%d")
@@ -234,17 +241,27 @@ def main():
 
     all_orders_count = 0
 
-    for shop_name in credentials.keys():
+    for shop_name, config in credentials.items():
         print(f"Stahuji: {shop_name}")
 
-        # Získat OAuth access token
-        access_token, eshop_url = get_oauth_token(shop_name, credentials)
-        if not access_token:
-            print(f"  Přeskočeno (OAuth chyba)")
+        # Rozpoznat typ autentizace
+        if "token" in config:
+            # Private Token
+            access_token = config["token"]
+            auth_method = "token"
+        elif "client_id" in config and "client_secret" in config:
+            # OAuth
+            access_token, eshop_url = get_oauth_token(shop_name, credentials)
+            if not access_token:
+                print(f"  Přeskočeno (OAuth chyba)")
+                continue
+            auth_method = "oauth"
+        else:
+            print(f"  Přeskočeno (neúplné credentials)")
             continue
 
         # Načíst objednávky
-        orders = get_orders_from_api(shop_name, access_token, eshop_url, date_from, date_to)
+        orders = get_orders_from_api(shop_name, access_token, auth_method, date_from, date_to)
 
         if not orders:
             print(f"  0 objednávek")
