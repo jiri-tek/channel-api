@@ -129,6 +129,59 @@ zlatakrasa.cz, prager.cz, nakupujdrevo.online, stary-vrch.cz
 
 ---
 
+## 4. Shopify → BigQuery
+
+**Soubor:** `shopify_to_bigquery.py`
+
+### Konfigurace
+- BigQuery dataset: `shopify_raw`
+- BigQuery tabulka: `orders`
+- Autentizace: **Private App Access Token** (v souboru)
+
+### Nastavení tokenu
+
+**Jak získat Shopify access token:**
+
+1. Přihlaste se do **Shopify Admin**
+2. Jděte na **Settings** → **Apps and sales channels** → **Develop apps**
+3. Klikněte **"Create an app"** nebo **"Allow custom app development"** (pokud je první)
+4. Pojmenujte app: "BigQuery Export"
+5. V **Configuration** → **Admin API integration**:
+   - Zaškrtněte: `read_orders`, `read_customers`
+6. Klikněte **"Save"** a pak **"Install app"**
+7. Zkopírujte **"Admin API access token"** (začíná `shpat_...`)
+
+**Vložte do souboru:**
+```bash
+cp shopify_credentials.json.example shopify_credentials.json
+```
+
+Upravte soubor:
+```json
+{
+  "myshop.myshopify.com": {
+    "shop_url": "myshop.myshopify.com",
+    "access_token": "shpat_xxxxx..."
+  }
+}
+```
+
+### Použití
+
+```bash
+# Export včerejších objednávek
+python shopify_to_bigquery.py
+
+# Export objednávek z konkrétního dne
+python shopify_to_bigquery.py --date 2026-02-20
+```
+
+### Co exportuje
+- Pouze objednávky se statusem `paid`, `authorized`, `partially_paid`
+- Data: datum, ID, order number, status, ceny, email zákazníka, město, typ zákazníka
+
+---
+
 ## Prevence duplicit
 
 Všechny skripty automaticky **mažou existující záznamy** pro dané datum a účet před insertem nových dat. To umožňuje bezpečné opakované spouštění (např. pokud se data aktualizují).

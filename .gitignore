@@ -1,5 +1,6 @@
 # Credentials a citlivé soubory
 shoptet_credentials.json
+shopify_credentials.json
 *.secret
 
 # Python
