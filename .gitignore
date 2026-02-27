@@ -1,0 +1,30 @@
+# Credentials a citlivé soubory
+shoptet_credentials.json
+*.secret
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# Test soubory
+test_*.py
+*.test.py
+
+# BigQuery credentials (pokud by byly lokálně)
+*-credentials.json
+service-account*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
