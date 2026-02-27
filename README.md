@@ -88,17 +88,24 @@ zlatakrasa.cz, fotocopy.sk, niftyminds.cz
 ### Konfigurace
 - BigQuery dataset: `shoptet_raw`
 - BigQuery tabulka: `orders`
-- Credentials: načítá ze souboru `shoptet_credentials.json`
+- Autentizace: **Private API Token** (hardcoded v souboru, řádky 17-32)
 
-### Nastavení credentials
+### Nastavení tokenů
 
-1. Vytvořte soubor `shoptet_credentials.json` podle vzoru:
+**Pro shopy s API přístupem:**
+1. Přihlaste se do Shoptet Admin → **Aplikace** → **API**
+2. Vygenerujte **Private API Token**
+3. Vložte token do `shoptet_to_bigquery.py`:
+   ```python
+   "shop-name.cz": {
+       "method": "api",
+       "token": "váš-token-zde"
+   }
+   ```
 
-```bash
-cp shoptet_credentials.json.example shoptet_credentials.json
-```
-
-2. Doplňte client_id a client_secret pro každý shop
+**Pro shopy bez API přístupu:**
+- Použijte CSV export (zatím neimplementováno)
+- Doporučujeme získat API přístup (standardizované schéma pro všechny Shoptet shopy)
 
 ### Použití
 

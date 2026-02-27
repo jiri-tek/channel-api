@@ -12,74 +12,73 @@ BQ_TABLE = "orders"
 
 CREDENTIALS_FILE = "shoptet_credentials.json"
 
-# Shoptet klienti
-SHOPTET_CLIENTS = [
-    "zlatakrasa.cz",
-    "prager.cz",
-    "nakupujdrevo.online",
-    "stary-vrch.cz"
-]
-
 def load_credentials():
-    """Načte Shoptet credentials ze souboru"""
+    """Načte Shoptet OAuth credentials ze souboru"""
     try:
         with open(CREDENTIALS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
         print(f"CHYBA: Soubor {CREDENTIALS_FILE} nenalezen")
+        print(f"Vytvořte ho podle vzoru shoptet_credentials.json.example")
         sys.exit(1)
     except json.JSONDecodeError as e:
         print(f"CHYBA: Nelze parsovat {CREDENTIALS_FILE}: {e}")
         sys.exit(1)
 
-def get_access_token(shop_name, credentials):
-    """Získá OAuth2 access token pro Shoptet API"""
+def get_oauth_token(shop_name, credentials):
+    """Získá OAuth access token pomocí Client Credentials flow"""
     creds = credentials.get(shop_name)
     if not creds:
         print(f"  Chyba: Nenalezeny credentials pro {shop_name}")
-        return None
+        return None, None
 
     client_id = creds.get("client_id")
     client_secret = creds.get("client_secret")
+    eshop_url = creds.get("eshop_url")
 
-    if not client_id or not client_secret:
+    if not client_id or not client_secret or not eshop_url:
         print(f"  Chyba: Neúplné credentials pro {shop_name}")
-        return None
+        return None, None
 
-    # Shoptet OAuth2 token endpoint
-    token_url = "https://shoptet.cz/action/ApiOAuthServer/token"
+    # Shoptet OAuth token endpoint
+    token_url = f"{eshop_url}/action/OAuthServer/token"
 
     data = {
         "grant_type": "client_credentials",
         "client_id": client_id,
-        "client_secret": client_secret
+        "client_secret": client_secret,
+        "scope": "api"
     }
 
     try:
         response = requests.post(token_url, data=data)
-        response.raise_for_status()
+
+        if response.status_code != 200:
+            try:
+                error = response.json()
+                print(f"  OAuth chyba pro {shop_name}: {error}")
+            except:
+                print(f"  OAuth chyba pro {shop_name}: {response.status_code} - {response.text[:200]}")
+            return None, None
+
         token_data = response.json()
-        return token_data.get("access_token")
+        access_token = token_data.get("access_token")
+
+        if not access_token:
+            print(f"  Chyba: Access token nebyl vrácen pro {shop_name}")
+            return None, None
+
+        return access_token, eshop_url
+
     except requests.exceptions.RequestException as e:
-        print(f"  Chyba při získávání access tokenu pro {shop_name}: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        print(f"  Chyba při parsování token response pro {shop_name}: {e}")
-        return None
+        print(f"  Chyba při získávání OAuth tokenu pro {shop_name}: {e}")
+        return None, None
 
-def get_shop_url(shop_name):
-    """Vrátí URL pro Shoptet API daného shopu"""
-    # Odstranit .cz z názvu pokud je přítomno
-    base_name = shop_name.replace(".cz", "").replace(".", "-")
-    return f"https://{base_name}.myshoptet.com"
-
-def get_orders(shop_name, access_token, date_from, date_to):
-    """Načte objednávky ze Shoptet API pro dané období"""
-    shop_url = get_shop_url(shop_name)
-    api_url = f"{shop_url}/api/orders"
+def get_orders_from_api(shop_name, access_token, eshop_url, date_from, date_to):
+    """Načte objednávky ze Shoptet API pomocí OAuth token"""
 
     headers = {
-        "Shoptet-Access-Token": access_token,
+        "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/vnd.shoptet.v1.0+json"
     }
 
@@ -87,55 +86,64 @@ def get_orders(shop_name, access_token, date_from, date_to):
     date_from_dt = datetime.strptime(date_from, "%Y-%m-%d")
     date_to_dt = datetime.strptime(date_to, "%Y-%m-%d")
 
-    # Shoptet API očekává ISO 8601 formát
     params = {
         "creationTimeFrom": date_from_dt.strftime("%Y-%m-%dT00:00:00+00:00"),
         "creationTimeTo": date_to_dt.strftime("%Y-%m-%dT23:59:59+00:00")
     }
 
+    api_url = "https://api.myshoptet.com/api/orders"
     all_orders = []
 
     try:
         response = requests.get(api_url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
 
-        if "data" not in data:
-            print(f"  Neočekávaná struktura odpovědi: {data}")
+        if response.status_code != 200:
+            try:
+                error_data = response.json()
+                print(f"  API chyba: {error_data}")
+            except:
+                print(f"  API chyba: {response.status_code} - {response.text[:200]}")
             return []
 
-        orders = data["data"].get("orders", [])
+        data = response.json()
+
+        if "data" not in data or "orders" not in data["data"]:
+            print(f"  Neočekávaná struktura odpovědi")
+            return []
+
+        orders = data["data"]["orders"]
 
         # Filtrovat pouze paid nebo dispatched objednávky
         filtered_orders = [
             order for order in orders
-            if order.get("status", {}).get("id") in ["paid", "dispatched"]
+            if order.get("paid") == True or order.get("status", {}).get("id") in [18, 19, 20]
         ]
 
         all_orders.extend(filtered_orders)
 
         # Shoptet API používá paginaci
-        while "paginator" in data["data"] and data["data"]["paginator"].get("nextPage"):
-            next_page_url = data["data"]["paginator"]["nextPage"]
-            response = requests.get(next_page_url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+        paginator = data["data"].get("paginator", {})
+        while paginator.get("nextPage"):
+            response = requests.get(paginator["nextPage"], headers=headers)
+            if response.status_code != 200:
+                break
 
+            data = response.json()
             orders = data["data"].get("orders", [])
             filtered_orders = [
                 order for order in orders
-                if order.get("status", {}).get("id") in ["paid", "dispatched"]
+                if order.get("paid") == True or order.get("status", {}).get("id") in [18, 19, 20]
             ]
-
             all_orders.extend(filtered_orders)
+            paginator = data["data"].get("paginator", {})
 
         return all_orders
 
     except requests.exceptions.RequestException as e:
-        print(f"  Chyba při volání API pro {shop_name}: {e}")
+        print(f"  Chyba při volání API: {e}")
         return []
     except (json.JSONDecodeError, KeyError) as e:
-        print(f"  Chyba při parsování dat pro {shop_name}: {e}")
+        print(f"  Chyba při parsování dat: {e}")
         return []
 
 def process_orders(orders, shop_name):
@@ -148,20 +156,27 @@ def process_orders(orders, shop_name):
         order_date = creation_time.split("T")[0] if creation_time else ""
 
         price = order.get("price", {})
-        customer = order.get("customer", {})
+        email = order.get("email", "")
+
+        # Billing address pro město
         billing_address = order.get("billingAddress", {})
+        delivery_city = billing_address.get("city", "")
+
+        # Company = typ zákazníka
+        company = order.get("company")
+        customer_type = "company" if company else "individual"
 
         row = {
             "order_date": order_date,
-            "order_id": str(order.get("id", "")),
+            "order_id": str(order.get("guid", "")),
             "account_name": shop_name,
             "order_code": order.get("code", ""),
-            "status": order.get("status", {}).get("id", ""),
+            "status": order.get("status", {}).get("name", ""),
             "total_price_with_vat": round(float(price.get("withVat", 0)), 2),
             "total_price_without_vat": round(float(price.get("withoutVat", 0)), 2),
-            "customer_email": customer.get("email", ""),
-            "delivery_city": billing_address.get("city", ""),
-            "customer_type": "company" if customer.get("company") else "individual",
+            "customer_email": email,
+            "delivery_city": delivery_city,
+            "customer_type": customer_type,
             "_imported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
@@ -219,17 +234,17 @@ def main():
 
     all_orders_count = 0
 
-    for shop_name in SHOPTET_CLIENTS:
+    for shop_name in credentials.keys():
         print(f"Stahuji: {shop_name}")
 
-        # Získat access token
-        access_token = get_access_token(shop_name, credentials)
+        # Získat OAuth access token
+        access_token, eshop_url = get_oauth_token(shop_name, credentials)
         if not access_token:
-            print(f"  Přeskočeno (chyba autentizace)")
+            print(f"  Přeskočeno (OAuth chyba)")
             continue
 
         # Načíst objednávky
-        orders = get_orders(shop_name, access_token, date_from, date_to)
+        orders = get_orders_from_api(shop_name, access_token, eshop_url, date_from, date_to)
 
         if not orders:
             print(f"  0 objednávek")
@@ -237,7 +252,7 @@ def main():
 
         # Zpracovat a nahrát
         rows = process_orders(orders, shop_name)
-        print(f"  {len(rows)} objednávek")
+        print(f"  {len(rows)} objednávek (zaplacené/vyřízené)")
 
         if rows:
             upload_to_bigquery(rows, date_from, shop_name)
